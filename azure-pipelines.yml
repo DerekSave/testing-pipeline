@@ -87,6 +87,6 @@ stages:
         ArtifactName: 'drop'
     - task: AzureRmWebAppDeployment@4     # Ejemplo de despliegue
       inputs:
-        azureSubscription: '$(azureServiceConnection)'
-        WebAppName: 'myapp-prod'
+        azureSubscription: 'azure-for-students-sc'
+        WebAppName: 'prod-webapp-sc'
         packageForLinux: '$(System.DefaultWorkingDirectory)/drop/*.zip'
