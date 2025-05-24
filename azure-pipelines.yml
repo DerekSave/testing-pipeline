@@ -1,0 +1,92 @@
+trigger:
+  branches:
+    include:
+      - develop
+      - feature/*
+      - bugfix/*
+      - release/*
+      - hotfix/*
+
+pr: none   # políticas de PR cubren la validación
+
+variables:
+  NODE_VERSION: '20.x'
+  NPM_TOKEN: $(npmToken)          # Ejemplo de variable secreta
+
+stages:
+# ---------- Build + Unit Test ----------
+- stage: Build
+  displayName: Build & Unit Tests
+  condition: |
+    or(startsWith(variables['Build.SourceBranch'], 'refs/heads/feature/'),
+       eq(variables['Build.SourceBranch'], 'refs/heads/develop'),
+       startsWith(variables['Build.SourceBranch'], 'refs/heads/bugfix/'))
+  jobs:
+  - job: build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+      clean: true
+    - task: NodeTool@0
+      inputs:
+        versionSpec: $(NODE_VERSION)
+    - script: |
+        npm ci
+        npx commitlint-azure-pipelines-cli   # Lint de commits
+      displayName: Install & CommitLint
+    - script: npm run test:unit -- --coverage
+      displayName: Run unit tests
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/junit.xml'
+# ---------- Integration Tests ----------
+- stage: Integration
+  dependsOn: Build
+  condition: |
+    or(startsWith(variables['Build.SourceBranch'], 'refs/heads/release/'),
+       startsWith(variables['Build.SourceBranch'], 'refs/heads/hotfix/'),
+       eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+  jobs:
+  - job: integration
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+    - script: npm run test:integration
+      displayName: Run integration tests
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/junit-integration.xml'
+# ---------- Release & Deploy ----------
+- stage: Release
+  dependsOn: Integration
+  condition: eq(variables['Build.SourceBranch'], 'refs/heads/main')
+  variables:
+    GIT_USER_NAME: 'Azure DevOps'
+    GIT_USER_EMAIL: 'devops@tuempresa.com'
+  jobs:
+  - job: release
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - checkout: self
+      clean: true
+    - script: |
+        git config --global user.email "$(GIT_USER_EMAIL)"
+        git config --global user.name  "$(GIT_USER_NAME)"
+        npm ci
+        npx standard-version           # Bump SemVer & CHANGELOG.md
+        git push --follow-tags origin main
+      displayName: Version & Changelog
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: 'dist'
+        ArtifactName: 'drop'
+    - task: AzureRmWebAppDeployment@4     # Ejemplo de despliegue
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        WebAppName: 'myapp-prod'
+        packageForLinux: '$(System.DefaultWorkingDirectory)/drop/*.zip'
